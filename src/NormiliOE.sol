@@ -5,6 +5,10 @@ import {Ownable} from "../lib/solady/src/auth/Ownable.sol";
 import {LibClone} from "../lib/solady/src/utils/LibClone.sol";
 import {ECDSA} from "../lib/solady/src/utils/ECDSA.sol";
 
+
+error CoolDown();
+error NoVault();
+
 interface IVaultDeploy {
     function deployDeterministic(address vaultOwner, address alignedNft, uint96 vaultId, bytes32 salt)
         external
@@ -25,7 +29,9 @@ interface IOE721Init {
     function initialize(
         address newOwner,
         address vault,
-        uint16 allocation,
+        uint256 price,
+        uint256 TotalSupply,
+       // uint16 allocation,
         string memory name,
         string memory symbol,
         string memory baseURI
@@ -34,18 +40,23 @@ interface IOE721Init {
 //BEZ INITIALISE DLA 721 TYLKO ROB NEW
 
 contract NormiliOE is Ownable {
-    error NoVault();
-using ECDSA for bytes32;
+   
+    using ECDSA for bytes32;
     event VaultDeployed(address indexed alignedNft, address indexed vault);
     event VaultFactorySet(address indexed avFactory);
     event ImplementationSet(address indexed oe721, address indexed oe1155);
     event CollectionDeployed(address indexed alignedNft, address indexed collection, uint16 indexed allocation);
 
+
+
     address public vaultFactory;
     address public oe721Implementation;
     address public oe1155Implementation;
     address public signer;
+
+    uint256 immutable COOLDOWN_PERIOD = 7 days;
     mapping(address alignedNft => address vault) public alignmentVaults;
+    mapping(address => uint256) private lastCallTimestamp;
 
     constructor(address newOwner, address avFactory, address oe721, address oe1155) payable {
         _initializeOwner(newOwner);
@@ -77,16 +88,20 @@ using ECDSA for bytes32;
         bytes calldata signature,
         address newOwner,
         address alignedNft,
-        uint16 allocation,
+        //uint16 allocation,
+        uint256 price,
+        uint256 TotalSupply,
         string memory name,
         string memory symbol,
         string memory baseURI,
         bytes32 salt
         ) external  requireSignature(signature)returns (address collection) {
+        if (block.timestamp <= lastCallTimestamp[msg.sender] + COOLDOWN_PERIOD)
+       revert CoolDown();
         address vault = alignmentVaults[alignedNft];
         if (vault == address(0)) revert NoVault();
         collection = LibClone.cloneDeterministic(oe721Implementation, salt);
-        IOE721Init(collection).initialize(newOwner, vault, allocation, name, symbol, baseURI);
+        IOE721Init(collection).initialize(newOwner, vault, price, TotalSupply, name, symbol, baseURI);
     }
 
 
@@ -100,6 +115,8 @@ using ECDSA for bytes32;
         string memory baseURI,
         bytes32 salt
     ) external  requireSignature(signature)returns (address collection) {
+        if (block.timestamp <= lastCallTimestamp[msg.sender] + COOLDOWN_PERIOD)
+       revert CoolDown();
         address vault = alignmentVaults[alignedNft];
         if (vault == address(0)) revert NoVault();
         collection = LibClone.cloneDeterministic(oe1155Implementation, salt);

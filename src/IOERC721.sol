@@ -19,24 +19,8 @@ interface IOERC721 {
     function vault() external view returns (address);
     function locked() external view returns (bool);
     function allocation() external view returns (uint16);
-    function name() external view returns (string memory);
-    function symbol() external view returns (string memory);
-    function baseURI() external view returns (string memory);
-    function getTokenIds() external view returns (uint256[] memory);
-
-   
-    function maxSupply(uint256 tokenId) external view returns (uint48);
-    function getPrice(uint256 tokenId) external view returns (uint256);
-
-    function create(uint256 tokenId, string memory tokenURI, uint48 supply, uint256 price) external;
-    function remove(uint256 tokenId) external;
     function updateBaseURI(string memory newBaseURI) external;
-    function updateTokenURI(uint256 tokenId, string memory tokenURI) external;
+    function mint(uint256 amount) external payable;
+   
 
-    function mint(address to, uint256 tokenId, uint256 amount) external payable;
-    function batchMint(address to, uint256[] memory tokenIds, uint256[] memory amounts) external payable;
-    function burn(uint256 tokenId, uint256 amount) external;
-    function burnFrom(address from, uint256 tokenId, uint256 amount) external;
-    function batchBurn(uint256[] memory tokenIds, uint256[] memory amounts) external;
-    function batchBurnFrom(address from, uint256[] memory tokenIds, uint256[] memory amounts) external;
 }
