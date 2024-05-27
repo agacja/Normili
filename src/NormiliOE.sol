@@ -4,8 +4,8 @@ pragma solidity ^0.8.15;
 import {Ownable} from "../lib/solady/src/auth/Ownable.sol";
 import {LibClone} from "../lib/solady/src/utils/LibClone.sol";
 import {ECDSA} from "../lib/solady/src/utils/ECDSA.sol";
-import { OptimismPortal } from "optimism/packages/contracts-bedrock/src/L1/OptimismPortal2.sol";
-import { Types } from "optimism/packages/contracts-bedrock/src/libraries/Types.sol"; 
+import {Types} from "./Types.sol";
+
 error CoolDown();
 error NoVault();
 
@@ -37,6 +37,17 @@ interface IOE721Init {
     ) external;
 }
 
+interface IOptimismPortal {
+    function proveWithdrawalTransaction(
+        Types.WithdrawalTransaction memory _tx,
+        uint256 _l2OutputIndex,
+        Types.OutputRootProof calldata _outputRootProof,
+        bytes[] calldata _withdrawalProof
+    ) external;
+
+    function finalizeWithdrawalTransaction(Types.WithdrawalTransaction memory _tx) external;
+}
+
 contract NormiliOE is Ownable {
     using ECDSA for bytes32;
 
@@ -50,7 +61,7 @@ contract NormiliOE is Ownable {
     }
 
     IL2StandardBridge private constant _L2_BRIDGE = IL2StandardBridge(0x4200000000000000000000000000000000000010);
-    OptimismPortal private constant _OPTIMISM_PORTAL = OptimismPortal(0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1);
+    IOptimismPortal private constant _OPTIMISM_PORTAL = IOptimismPortal(0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1);
 
     address public oe721Implementation;
     address public oe1155Implementation;
