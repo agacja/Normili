@@ -56,12 +56,10 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         _disableInitializers();
     }
 
-    function initialize(
-        address owner_,
-        string memory name_,
-        string memory symbol_,
-        string memory baseURI_
-    ) external initializer {
+    function initialize(address owner_, string memory name_, string memory symbol_, string memory baseURI_)
+        external
+        initializer
+    {
         _initializeOwner(owner_);
         name = name_;
         symbol = symbol_;
@@ -111,14 +109,30 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         }
     }
 
-    function create(uint256 tokenId, string memory tokenURI, uint40 supply, uint16 allocation_, address alignedNft_, uint96 price) external onlyOwner {
+    function create(
+        uint256 tokenId,
+        string memory tokenURI,
+        uint40 supply,
+        uint16 allocation_,
+        address alignedNft_,
+        uint96 price,
+        uint40 mintEnd
+    ) external onlyOwner {
         if (_tokenIds.contains(tokenId)) revert Exists();
         address metadata;
         if (bytes(tokenURI).length > 0) {
             metadata = SSTORE2.write(abi.encode(tokenURI));
         }
 
-        tokenData[tokenId] = TokenData({uri: metadata, supply: supply, minted: 0, allocation: allocation_, alignedNft: alignedNft_, price: price});
+        tokenData[tokenId] = TokenData({
+            uri: metadata,
+            supply: supply,
+            minted: 0,
+            allocation: allocation_,
+            alignedNft: alignedNft_,
+            price: price,
+            mintEnd: mintEnd
+        });
         _tokenIds.add(tokenId);
         emit Created(tokenId, tokenURI, supply);
     }
@@ -144,11 +158,12 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
     }
 
     function mint(address to, uint256 tokenId, uint256 amount) external payable mintable(tokenId, amount) {
-        _mint(to, tokenId, amount, bytes(""));
         // Send aligned funds to factory for accrual
         TokenData memory data = tokenData[tokenId];
+        if (data.mintEnd != 0 && block.timestamp > data.mintEnd) revert Closed();
         INormiliOE(deployer).alignFunds{value: FPML.fullMulDiv(msg.value, data.allocation, 10_000)}(data.alignedNft);
         // TODO: Pay all other involved parties
+        _mint(to, tokenId, amount, bytes(""));
     }
 
     function batchMint(address to, uint256[] memory tokenIds, uint256[] memory amounts)
@@ -156,7 +171,6 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         payable
         batchMintable(tokenIds, amounts)
     {
-        _batchMint(to, tokenIds, amounts, bytes(""));
         // Send aligned funds to factory for accrual
         for (uint256 i; i < tokenIds.length; ++i) {
             TokenData memory data = tokenData[tokenIds[i]];
@@ -164,6 +178,7 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
             INormiliOE(deployer).alignFunds{value: FPML.fullMulDiv(payment, data.allocation, 10_000)}(data.alignedNft);
         }
         // TODO: Pay all other involved parties
+        _batchMint(to, tokenIds, amounts, bytes(""));
     }
 
     function burn(uint256 tokenId, uint256 amount) external {
