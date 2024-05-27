@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.23;
 
-import {Ownable} from "../lib/solady/src/auth/Ownable.sol";
-import {LibClone} from "../lib/solady/src/utils/LibClone.sol";
-import {ECDSA} from "../lib/solady/src/utils/ECDSA.sol";
-import "@eth-optimism/contracts/L1/OptimismPortal.sol";
-import "@eth-optimism/contracts/libraries/types/Lib_BVMCodec.sol";
+import { Ownable } from "../lib/solady/src/auth/Ownable.sol";
+import { LibClone } from "../lib/solady/src/utils/LibClone.sol";
+import { ECDSA } from "../lib/solady/src/utils/ECDSA.sol";
+import { OptimismPortal } from "@eth-optimism/contracts/L1/OptimismPortal.sol";
+import { Types } from "@eth-optimism/contracts/libraries/Types.sol"; 
 
 error CoolDown();
 error NoVault();
@@ -37,7 +37,6 @@ interface IOE721Init {
         string memory baseURI
     ) external;
 }
-//BEZ INITIALISE DLA 721 TYLKO ROB NEW
 
 contract NormiliOE is Ownable {
     using ECDSA for bytes32;
@@ -52,6 +51,7 @@ contract NormiliOE is Ownable {
     }
 
     IL2StandardBridge private constant _L2_BRIDGE = IL2StandardBridge(0x4200000000000000000000000000000000000010);
+    OptimismPortal private constant _OPTIMISM_PORTAL = OptimismPortal(0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1);
 
     address public oe721Implementation;
     address public oe1155Implementation;
@@ -59,7 +59,7 @@ contract NormiliOE is Ownable {
 
     uint256 immutable COOLDOWN_PERIOD = 7 days;
     uint256 public totalAlignedEth;
-    mapping(address nft => AlignmentData) public alignmentVaults;
+    mapping(address => AlignmentData) public alignmentVaults;
     mapping(address => uint256) private lastCallTimestamp;
 
     modifier requireSignature(bytes calldata signature) {
@@ -91,7 +91,6 @@ contract NormiliOE is Ownable {
         emit ImplementationSet(oe721, oe1155);
     }
 
-    //function deployOE721() external {}
     function deployOE721(
         bytes calldata signature,
         address newOwner,
@@ -141,19 +140,25 @@ contract NormiliOE is Ownable {
             alignmentVaults[nft].eth = 0;
             totalAlignedEth -= data.eth;
         }
-        _L2_BRIDGE.bridgeETHTo{value: data.eth}(data.vault, 200_000, bytes("milady")); // extraData is useless in this context so why not miladypost onchain?
+        _L2_BRIDGE.bridgeETHTo{value: data.eth}(data.vault, 200_000, bytes("milady"));
         emit Bridged(nft, data.vault, data.eth);
     }
 
     function proveWithdrawal(
-        bytes32[] memory _outputRootProof,
-        bytes memory _withdrawalProof,
-        uint256 _l2OutputIndex
-    ) external {
-        OptimismPortal(0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1).proveWithdrawalTransaction(
+        Types.WithdrawalTransaction memory _tx,
+        uint256 _l2OutputIndex,
+        Types.OutputRootProof calldata _outputRootProof,
+        bytes[] calldata _withdrawalProof
+    ) external onlyOwner {
+        _OPTIMISM_PORTAL.proveWithdrawalTransaction(
+            _tx,
+            _l2OutputIndex,
             _outputRootProof,
-            _withdrawalProof,
-            _l2OutputIndex
+            _withdrawalProof
         );
+    }
+
+    function finalizeWithdrawal(Types.WithdrawalTransaction memory _tx) external onlyOwner {
+        _OPTIMISM_PORTAL.finalizeWithdrawalTransaction(_tx);
     }
 }
