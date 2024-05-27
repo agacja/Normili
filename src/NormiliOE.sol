@@ -4,6 +4,8 @@ pragma solidity ^0.8.23;
 import {Ownable} from "../lib/solady/src/auth/Ownable.sol";
 import {LibClone} from "../lib/solady/src/utils/LibClone.sol";
 import {ECDSA} from "../lib/solady/src/utils/ECDSA.sol";
+import "@eth-optimism/contracts/L1/OptimismPortal.sol";
+import "@eth-optimism/contracts/libraries/types/Lib_BVMCodec.sol";
 
 error CoolDown();
 error NoVault();
@@ -141,5 +143,17 @@ contract NormiliOE is Ownable {
         }
         _L2_BRIDGE.bridgeETHTo{value: data.eth}(data.vault, 200_000, bytes("milady")); // extraData is useless in this context so why not miladypost onchain?
         emit Bridged(nft, data.vault, data.eth);
+    }
+
+    function proveWithdrawal(
+        bytes32[] memory _outputRootProof,
+        bytes memory _withdrawalProof,
+        uint256 _l2OutputIndex
+    ) external {
+        OptimismPortal(0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1).proveWithdrawalTransaction(
+            _outputRootProof,
+            _withdrawalProof,
+            _l2OutputIndex
+        );
     }
 }
