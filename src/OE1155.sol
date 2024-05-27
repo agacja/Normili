@@ -19,10 +19,8 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
     using EnumerableSetLib for EnumerableSetLib.Uint256Set;
 
     address private _baseURI;
-    address public alignedNft;
     address public deployer;
     bool public locked;
-    uint16 public allocation;
     string public name;
     string public symbol;
     mapping(uint256 tokenId => TokenData) public tokenData;
@@ -34,7 +32,7 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         if (token.minted + amount > token.supply) revert SupplyCap();
         if (msg.value < amount * token.price) revert InsufficientPayment();
         unchecked {
-            tokenData[tokenId].minted += uint48(amount);
+            tokenData[tokenId].minted += uint40(amount);
         }
         _;
     }
@@ -46,7 +44,7 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
             if (amounts[i] > token.supply) revert Overflow();
             if (token.minted + amounts[i] > token.supply) revert SupplyCap();
             unchecked {
-                tokenData[tokenIds[i]].minted += uint48(amounts[i]);
+                tokenData[tokenIds[i]].minted += uint40(amounts[i]);
                 required += amounts[i] * token.price;
             }
         }
@@ -60,20 +58,15 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
 
     function initialize(
         address owner_,
-        address alignedNft_,
-        uint16 allocation_,
         string memory name_,
         string memory symbol_,
         string memory baseURI_
     ) external initializer {
         _initializeOwner(owner_);
-        alignedNft = alignedNft_;
-        allocation = allocation_;
         name = name_;
         symbol = symbol_;
         _baseURI = SSTORE2.write(abi.encode(baseURI_));
         deployer = msg.sender;
-        emit Allocation(allocation_);
         emit BaseURIUpdate(baseURI_);
     }
 
@@ -81,13 +74,22 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         return abi.decode(SSTORE2.read(_baseURI), (string));
     }
 
-    function totalSupply(uint256 tokenId) external view returns (uint48) {
+    function allocation(uint256 tokenId) external view returns (uint16) {
+        return tokenData[tokenId].allocation;
+    }
+
+    function alignedNft(uint256 tokenId) external view returns (address) {
+        return tokenData[tokenId].alignedNft;
+    }
+
+    function totalSupply(uint256 tokenId) external view returns (uint40) {
         return tokenData[tokenId].minted;
     }
 
-    function maxSupply(uint256 tokenId) external view returns (uint48) {
-        uint48 supply = tokenData[tokenId].supply;
-        if (supply == 0) return type(uint48).max;
+    function maxSupply(uint256 tokenId) external view returns (uint40) {
+        if (!_tokenIds.contains(tokenId)) revert DoesntExist();
+        uint40 supply = tokenData[tokenId].supply;
+        if (supply == 0) return type(uint40).max;
         else return supply;
     }
 
@@ -95,7 +97,7 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         return _tokenIds.values();
     }
 
-    function getPrice(uint256 tokenId) external view returns (uint256) {
+    function getPrice(uint256 tokenId) external view returns (uint96) {
         return tokenData[tokenId].price;
     }
 
@@ -109,14 +111,14 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         }
     }
 
-    function create(uint256 tokenId, string memory tokenURI, uint48 supply, uint256 price) external onlyOwner {
+    function create(uint256 tokenId, string memory tokenURI, uint40 supply, uint16 allocation_, address alignedNft_, uint96 price) external onlyOwner {
         if (_tokenIds.contains(tokenId)) revert Exists();
         address metadata;
         if (bytes(tokenURI).length > 0) {
             metadata = SSTORE2.write(abi.encode(tokenURI));
         }
 
-        tokenData[tokenId] = TokenData({uri: metadata, supply: supply, minted: 0, price: price});
+        tokenData[tokenId] = TokenData({uri: metadata, supply: supply, minted: 0, allocation: allocation_, alignedNft: alignedNft_, price: price});
         _tokenIds.add(tokenId);
         emit Created(tokenId, tokenURI, supply);
     }
@@ -144,7 +146,8 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
     function mint(address to, uint256 tokenId, uint256 amount) external payable mintable(tokenId, amount) {
         _mint(to, tokenId, amount, bytes(""));
         // Send aligned funds to factory for accrual
-        INormiliOE(deployer).alignFunds{value: FPML.fullMulDiv(msg.value, allocation, 10_000)}(alignedNft);
+        TokenData memory data = tokenData[tokenId];
+        INormiliOE(deployer).alignFunds{value: FPML.fullMulDiv(msg.value, data.allocation, 10_000)}(data.alignedNft);
         // TODO: Pay all other involved parties
     }
 
@@ -155,7 +158,10 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
     {
         _batchMint(to, tokenIds, amounts, bytes(""));
         // Send aligned funds to factory for accrual
-        INormiliOE(deployer).alignFunds{value: FPML.fullMulDiv(msg.value, allocation, 10_000)}(alignedNft);
+        for (uint256 i; i < tokenIds.length; ++i) {
+            TokenData memory data = tokenData[tokenIds[i]];
+            INormiliOE(deployer).alignFunds{value: FPML.fullMulDiv(msg.value, data.allocation, 10_000)}(data.alignedNft);
+        }
         // TODO: Pay all other involved parties
     }
 

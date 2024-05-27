@@ -17,14 +17,14 @@ interface IOE1155 {
 
     struct TokenData {
         address uri;
-        uint48 supply;
-        uint48 minted;
-        uint256 price;
+        uint40 supply;
+        uint40 minted;
+        uint16 allocation;
+        address alignedNft;
+        uint96 price;
     }
 
-    function alignedNft() external view returns (address);
     function locked() external view returns (bool);
-    function allocation() external view returns (uint16);
     function name() external view returns (string memory);
     function symbol() external view returns (string memory);
     function baseURI() external view returns (string memory);
@@ -33,12 +33,14 @@ interface IOE1155 {
     function tokenData(uint256 tokenId)
         external
         view
-        returns (address uri, uint48 supply, uint48 minted, uint256 price);
-    function totalSupply(uint256 tokenId) external view returns (uint48);
-    function maxSupply(uint256 tokenId) external view returns (uint48);
-    function getPrice(uint256 tokenId) external view returns (uint256);
+        returns (address uri, uint40 supply, uint40 minted, uint16 allocation, address alignedNft, uint96 price);
+    function allocation(uint256 tokenId) external view returns (uint16);
+    function alignedNft(uint256 tokenId) external view returns (address);
+    function totalSupply(uint256 tokenId) external view returns (uint40);
+    function maxSupply(uint256 tokenId) external view returns (uint40);
+    function getPrice(uint256 tokenId) external view returns (uint96);
 
-    function create(uint256 tokenId, string memory tokenURI, uint48 supply, uint256 price) external;
+    function create(uint256 tokenId, string memory tokenURI, uint40 supply, uint16 allocation_, address alignedNft_, uint96 price) external;
     function remove(uint256 tokenId) external;
     function updateBaseURI(string memory newBaseURI) external;
     function updateTokenURI(uint256 tokenId, string memory tokenURI) external;
