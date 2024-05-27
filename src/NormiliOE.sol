@@ -1,16 +1,34 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.15;
 
-import {Ownable} from "../lib/solady/src/auth/Ownable.sol";
-import {LibClone} from "../lib/solady/src/utils/LibClone.sol";
-import {ECDSA} from "../lib/solady/src/utils/ECDSA.sol";
-import {Types} from "./Types.sol";
+import { Ownable } from "../lib/solady/src/auth/Ownable.sol";
+import { LibClone } from "../lib/solady/src/utils/LibClone.sol";
+import { ECDSA } from "../lib/solady/src/utils/ECDSA.sol";
+import { Types } from "./Types.sol";
 
 error CoolDown();
 error NoVault();
+error InvalidSignature();
+error InsufficientFunds();
+error WithdrawalNotProven();
+error WithdrawalAlreadyProcessed();
+error FaultChallengePeriodNotPassed();
 
-interface IL2StandardBridge {
-    function bridgeETHTo(address to, uint32 minGasLimit, bytes calldata extraData) external payable;
+interface IL2CrossDomainMessenger {
+    function sendMessage(address _target, bytes calldata _message, uint32 _minGasLimit) external payable;
+}
+
+interface IOptimismPortal {
+    function proveWithdrawalTransaction(
+        Types.WithdrawalTransaction memory _tx,
+        uint256 _l2OutputIndex,
+        Types.OutputRootProof calldata _outputRootProof,
+        bytes[] calldata _withdrawalProof
+    ) external;
+
+    function finalizeWithdrawalTransaction(Types.WithdrawalTransaction memory _tx) external;
+
+    function FINALIZATION_PERIOD_SECONDS() external view returns (uint256);
 }
 
 interface IOE1155Init {
@@ -37,31 +55,28 @@ interface IOE721Init {
     ) external;
 }
 
-interface IOptimismPortal {
-    function proveWithdrawalTransaction(
-        Types.WithdrawalTransaction memory _tx,
-        uint256 _l2OutputIndex,
-        Types.OutputRootProof calldata _outputRootProof,
-        bytes[] calldata _withdrawalProof
-    ) external;
-
-    function finalizeWithdrawalTransaction(Types.WithdrawalTransaction memory _tx) external;
-}
-
 contract NormiliOE is Ownable {
     using ECDSA for bytes32;
 
     event Bridged(address indexed nft, address indexed vault, uint256 indexed amount);
     event ImplementationSet(address indexed oe721, address indexed oe1155);
     event CollectionDeployed(address indexed alignedNft, address indexed collection, uint16 indexed allocation);
+    event WithdrawalInitiated(address indexed from, address indexed to, uint256 amount, bytes32 indexed withdrawalHash);
+    event WithdrawalProven(bytes32 indexed withdrawalHash);
+    event WithdrawalFinalized(bytes32 indexed withdrawalHash);
 
     struct AlignmentData {
         address vault;
         uint96 eth;
     }
 
-    IL2StandardBridge private constant _L2_BRIDGE = IL2StandardBridge(0x4200000000000000000000000000000000000010);
-    IOptimismPortal private constant _OPTIMISM_PORTAL = IOptimismPortal(0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1);
+    struct WithdrawalProof {
+        uint256 timestamp;
+        bool proven;
+    }
+
+    IL2CrossDomainMessenger public immutable L2_MESSENGER = IL2CrossDomainMessenger(0x4200000000000000000000000000000000000007);
+    IOptimismPortal private constant OPTIMISM_PORTAL = IOptimismPortal(0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1);
 
     address public oe721Implementation;
     address public oe1155Implementation;
@@ -71,12 +86,15 @@ contract NormiliOE is Ownable {
     uint256 public totalAlignedEth;
     mapping(address => AlignmentData) public alignmentVaults;
     mapping(address => uint256) private lastCallTimestamp;
+    mapping(bytes32 => bool) public processedWithdrawals;
+    mapping(bytes32 => WithdrawalProof) public withdrawalProofs;
 
     modifier requireSignature(bytes calldata signature) {
-        require(
-            keccak256(abi.encode(msg.sender)).toEthSignedMessageHash().recover(signature) == signer,
-            "Invalid signature."
-        );
+        bytes32 messageHash = keccak256(abi.encode(msg.sender)).toEthSignedMessageHash();
+        address recoveredSigner = messageHash.recover(signature);
+        if (recoveredSigner != signer) {
+            revert InvalidSignature();
+        }
         _;
     }
 
@@ -88,7 +106,9 @@ contract NormiliOE is Ownable {
     }
 
     function alignFunds(address alignedNft) external payable {
-        if (alignmentVaults[alignedNft].vault == address(0)) revert NoVault();
+        if (alignmentVaults[alignedNft].vault == address(0)) {
+            revert NoVault();
+        }
         unchecked {
             alignmentVaults[alignedNft].eth += uint96(msg.value);
             totalAlignedEth += msg.value;
@@ -116,9 +136,13 @@ contract NormiliOE is Ownable {
         if (block.timestamp <= lastCallTimestamp[msg.sender] + COOLDOWN_PERIOD) {
             revert CoolDown();
         }
-        if (alignmentVaults[alignedNft].vault == address(0)) revert NoVault();
+        if (alignmentVaults[alignedNft].vault == address(0)) {
+            revert NoVault();
+        }
         collection = LibClone.cloneDeterministic(oe721Implementation, salt);
         IOE721Init(collection).initialize(newOwner, alignedNft, price, TotalSupply, allocation, name, symbol, baseURI);
+        lastCallTimestamp[msg.sender] = block.timestamp;
+        emit CollectionDeployed(alignedNft, collection, allocation);
     }
 
     function deployOE1155(
@@ -134,41 +158,128 @@ contract NormiliOE is Ownable {
         if (block.timestamp <= lastCallTimestamp[msg.sender] + COOLDOWN_PERIOD) {
             revert CoolDown();
         }
-        if (alignmentVaults[alignedNft].vault == address(0)) revert NoVault();
+        if (alignmentVaults[alignedNft].vault == address(0)) {
+            revert NoVault();
+        }
         collection = LibClone.cloneDeterministic(oe1155Implementation, salt);
         IOE1155Init(collection).initialize(newOwner, alignedNft, allocation, name, symbol, baseURI);
+        lastCallTimestamp[msg.sender] = block.timestamp;
+        emit CollectionDeployed(alignedNft, collection, allocation);
     }
 
     function setSigner(address value) external onlyOwner {
         signer = value;
     }
 
-    function bridgeToVault(address nft) external onlyOwner {
-        AlignmentData memory data = alignmentVaults[nft];
-        if (data.vault == address(0) || data.eth == 0) return;
-        unchecked {
-            alignmentVaults[nft].eth = 0;
-            totalAlignedEth -= data.eth;
+ function bridgeToVault(address nft) external onlyOwner {
+    AlignmentData memory data = alignmentVaults[nft];
+    if (data.vault == address(0) || data.eth == 0) return;
+    unchecked {
+        alignmentVaults[nft].eth = 0;
+        totalAlignedEth -= data.eth;
+    }
+    L2_MESSENGER.sendMessage{value: data.eth}(data.vault, bytes("milady"), 200_000);
+    emit Bridged(nft, data.vault, data.eth);
+}
+
+    function initiateWithdrawal(address to, uint256 amount) external {
+        AlignmentData memory vaultData = alignmentVaults[msg.sender];
+        if (vaultData.vault == address(0)) {
+            revert NoVault();
         }
-        _L2_BRIDGE.bridgeETHTo{value: data.eth}(data.vault, 200_000, bytes("milady"));
-        emit Bridged(nft, data.vault, data.eth);
+        if (amount > vaultData.eth) {
+            revert InsufficientFunds();
+        }
+
+        unchecked {
+            alignmentVaults[msg.sender].eth -= uint96(amount);
+            totalAlignedEth -= amount;
+        }
+
+        bytes memory message = abi.encodeWithSignature(
+            "processWithdrawal(address,address,uint256)",
+            msg.sender,
+            to,
+            amount
+        );
+        bytes32 withdrawalHash = keccak256(message);
+
+        L2_MESSENGER.sendMessage{value: amount}(
+            address(this),
+            message,
+            200_000
+        );
+
+        emit WithdrawalInitiated(msg.sender, to, amount, withdrawalHash);
     }
 
-    function proveWithdrawal(
+    function proveWithdrawalTransaction(
         Types.WithdrawalTransaction memory _tx,
         uint256 _l2OutputIndex,
         Types.OutputRootProof calldata _outputRootProof,
         bytes[] calldata _withdrawalProof
-    ) external onlyOwner {
-        _OPTIMISM_PORTAL.proveWithdrawalTransaction(
+    ) external {
+        bytes32 withdrawalHash = keccak256(
+            abi.encodeWithSignature(
+                "processWithdrawal(address,address,uint256)",
+                _tx.sender,
+                _tx.target,
+                _tx.value
+            )
+        );
+
+        if (processedWithdrawals[withdrawalHash]) {
+            revert WithdrawalAlreadyProcessed();
+        }
+        if (withdrawalProofs[withdrawalHash].proven) {
+            revert WithdrawalNotProven();
+        }
+
+        OPTIMISM_PORTAL.proveWithdrawalTransaction(
             _tx,
             _l2OutputIndex,
             _outputRootProof,
             _withdrawalProof
         );
+
+        withdrawalProofs[withdrawalHash] = WithdrawalProof({
+            timestamp: block.timestamp,
+            proven: true
+        });
+
+        emit WithdrawalProven(withdrawalHash);
     }
 
-    function finalizeWithdrawal(Types.WithdrawalTransaction memory _tx) external onlyOwner {
-        _OPTIMISM_PORTAL.finalizeWithdrawalTransaction(_tx);
+    function finalizeWithdrawalTransaction(
+        Types.WithdrawalTransaction memory _tx
+    ) external {
+        bytes32 withdrawalHash = keccak256(
+            abi.encodeWithSignature(
+                "processWithdrawal(address,address,uint256)",
+                _tx.sender,
+                _tx.target,
+                _tx.value
+            )
+        );
+
+        WithdrawalProof memory proof = withdrawalProofs[withdrawalHash];
+
+        if (!proof.proven) {
+            revert WithdrawalNotProven();
+        }
+
+        if (processedWithdrawals[withdrawalHash]) {
+            revert WithdrawalAlreadyProcessed();
+        }
+
+        if (block.timestamp <= proof.timestamp + OPTIMISM_PORTAL.FINALIZATION_PERIOD_SECONDS()) {
+            revert FaultChallengePeriodNotPassed();
+        }
+
+        OPTIMISM_PORTAL.finalizeWithdrawalTransaction(_tx);
+
+        processedWithdrawals[withdrawalHash] = true;
+
+        emit WithdrawalFinalized(withdrawalHash);
     }
 }
