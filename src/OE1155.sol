@@ -9,12 +9,18 @@ import {IOE1155} from "./IOE1155.sol";
 import {SSTORE2} from "../lib/solady/src/utils/SSTORE2.sol";
 import {EnumerableSetLib} from "../lib/solady/src/utils/EnumerableSetLib.sol";
 import {LibString} from "../lib/solady/src/utils/LibString.sol";
+import {FixedPointMathLib as FPML} from "../lib/solady/src/utils/FixedPointMathLib.sol";
+
+interface INormiliOE {
+    function alignFunds(address alignedNft) external payable;
+}
 
 contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
     using EnumerableSetLib for EnumerableSetLib.Uint256Set;
 
     address private _baseURI;
-    address public vault;
+    address public alignedNft;
+    address public deployer;
     bool public locked;
     uint16 public allocation;
     string public name;
@@ -54,18 +60,19 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
 
     function initialize(
         address owner_,
-        address vault_,
+        address alignedNft_,
         uint16 allocation_,
         string memory name_,
         string memory symbol_,
         string memory baseURI_
     ) external initializer {
         _initializeOwner(owner_);
-        vault = vault_;
+        alignedNft = alignedNft_;
         allocation = allocation_;
         name = name_;
         symbol = symbol_;
         _baseURI = SSTORE2.write(abi.encode(baseURI_));
+        deployer = msg.sender;
         emit Allocation(allocation_);
         emit BaseURIUpdate(baseURI_);
     }
@@ -136,6 +143,9 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
 
     function mint(address to, uint256 tokenId, uint256 amount) external payable mintable(tokenId, amount) {
         _mint(to, tokenId, amount, bytes(""));
+        // Send aligned funds to factory for accrual
+        INormiliOE(deployer).alignFunds{value: FPML.fullMulDiv(msg.value, allocation, 10_000)}(alignedNft);
+        // TODO: Pay all other involved parties
     }
 
     function batchMint(address to, uint256[] memory tokenIds, uint256[] memory amounts)
@@ -144,6 +154,9 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         batchMintable(tokenIds, amounts)
     {
         _batchMint(to, tokenIds, amounts, bytes(""));
+        // Send aligned funds to factory for accrual
+        INormiliOE(deployer).alignFunds{value: FPML.fullMulDiv(msg.value, allocation, 10_000)}(alignedNft);
+        // TODO: Pay all other involved parties
     }
 
     function burn(uint256 tokenId, uint256 amount) external {

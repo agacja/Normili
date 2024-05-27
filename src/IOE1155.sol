@@ -22,7 +22,7 @@ interface IOE1155 {
         uint256 price;
     }
 
-    function vault() external view returns (address);
+    function alignedNft() external view returns (address);
     function locked() external view returns (bool);
     function allocation() external view returns (uint16);
     function name() external view returns (string memory);

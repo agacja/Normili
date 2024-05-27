@@ -15,7 +15,7 @@ interface IOERC721 {
     event BaseURIUpdate(string indexed tokenURI);
     event TokenURIUpdate(uint256 indexed tokenId, string indexed tokenURI);
 
-    function vault() external view returns (address);
+    function alignedNft() external view returns (address);
     function locked() external view returns (bool);
     function allocation() external view returns (uint16);
     function updateBaseURI(string memory newBaseURI) external;
