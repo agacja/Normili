@@ -160,7 +160,8 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         // Send aligned funds to factory for accrual
         for (uint256 i; i < tokenIds.length; ++i) {
             TokenData memory data = tokenData[tokenIds[i]];
-            INormiliOE(deployer).alignFunds{value: FPML.fullMulDiv(msg.value, data.allocation, 10_000)}(data.alignedNft);
+            uint256 payment = FPML.rawMul(data.price, amounts[i]);
+            INormiliOE(deployer).alignFunds{value: FPML.fullMulDiv(payment, data.allocation, 10_000)}(data.alignedNft);
         }
         // TODO: Pay all other involved parties
     }
