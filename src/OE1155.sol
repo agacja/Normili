@@ -138,8 +138,12 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         _mint(to, tokenId, amount, bytes(""));
     }
 
-    function batchMint(address to, uint256[] memory tokenIds, uint256[] memory amounts) external payable batchMintable(tokenIds, amounts) {
-        _batchMint(to, tokenIds, amounts, bytes(''));
+    function batchMint(address to, uint256[] memory tokenIds, uint256[] memory amounts)
+        external
+        payable
+        batchMintable(tokenIds, amounts)
+    {
+        _batchMint(to, tokenIds, amounts, bytes(""));
     }
 
     function burn(uint256 tokenId, uint256 amount) external {

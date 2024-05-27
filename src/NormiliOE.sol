@@ -5,15 +5,8 @@ import {Ownable} from "../lib/solady/src/auth/Ownable.sol";
 import {LibClone} from "../lib/solady/src/utils/LibClone.sol";
 import {ECDSA} from "../lib/solady/src/utils/ECDSA.sol";
 
-
 error CoolDown();
 error NoVault();
-
-interface IVaultDeploy {
-    function deployDeterministic(address vaultOwner, address alignedNft, uint96 vaultId, bytes32 salt)
-        external
-        returns (address);
-}
 
 interface IOE1155Init {
     function initialize(
@@ -25,13 +18,14 @@ interface IOE1155Init {
         string memory baseURI
     ) external;
 }
+
 interface IOE721Init {
     function initialize(
         address newOwner,
         address vault,
         uint256 price,
         uint256 TotalSupply,
-       // uint16 allocation,
+        // uint16 allocation,
         string memory name,
         string memory symbol,
         string memory baseURI
@@ -40,16 +34,11 @@ interface IOE721Init {
 //BEZ INITIALISE DLA 721 TYLKO ROB NEW
 
 contract NormiliOE is Ownable {
-   
     using ECDSA for bytes32;
-    event VaultDeployed(address indexed alignedNft, address indexed vault);
-    event VaultFactorySet(address indexed avFactory);
+
     event ImplementationSet(address indexed oe721, address indexed oe1155);
     event CollectionDeployed(address indexed alignedNft, address indexed collection, uint16 indexed allocation);
 
-
-
-    address public vaultFactory;
     address public oe721Implementation;
     address public oe1155Implementation;
     address public signer;
@@ -58,17 +47,11 @@ contract NormiliOE is Ownable {
     mapping(address alignedNft => address vault) public alignmentVaults;
     mapping(address => uint256) private lastCallTimestamp;
 
-    constructor(address newOwner, address avFactory, address oe721, address oe1155) payable {
+    constructor(address newOwner, address oe721, address oe1155) payable {
         _initializeOwner(newOwner);
-        vaultFactory = avFactory;
         oe721Implementation = oe721;
         oe1155Implementation = oe1155;
         emit ImplementationSet(oe721, oe1155);
-    }
-
-    function setVaultFactory(address avFactory) external onlyOwner {
-        if (avFactory != address(0)) vaultFactory = avFactory;
-        emit VaultFactorySet(avFactory);
     }
 
     function setImplementation(address oe721, address oe1155) external onlyOwner {
@@ -77,14 +60,8 @@ contract NormiliOE is Ownable {
         emit ImplementationSet(oe721, oe1155);
     }
 
-    function deployVault(address alignedNft, uint96 vaultId, bytes32 salt) external onlyOwner returns (address vault) {
-        vault = IVaultDeploy(vaultFactory).deployDeterministic(owner(), alignedNft, vaultId, salt);
-        alignmentVaults[alignedNft] = vault;
-        emit VaultDeployed(alignedNft, vault);
-    }
-
     //function deployOE721() external {}
-      function deployOE721(
+    function deployOE721(
         bytes calldata signature,
         address newOwner,
         address alignedNft,
@@ -95,15 +72,15 @@ contract NormiliOE is Ownable {
         string memory symbol,
         string memory baseURI,
         bytes32 salt
-        ) external  requireSignature(signature)returns (address collection) {
-        if (block.timestamp <= lastCallTimestamp[msg.sender] + COOLDOWN_PERIOD)
-       revert CoolDown();
+    ) external requireSignature(signature) returns (address collection) {
+        if (block.timestamp <= lastCallTimestamp[msg.sender] + COOLDOWN_PERIOD) {
+            revert CoolDown();
+        }
         address vault = alignmentVaults[alignedNft];
         if (vault == address(0)) revert NoVault();
         collection = LibClone.cloneDeterministic(oe721Implementation, salt);
         IOE721Init(collection).initialize(newOwner, vault, price, TotalSupply, name, symbol, baseURI);
     }
-
 
     function deployOE1155(
         bytes calldata signature,
@@ -114,26 +91,23 @@ contract NormiliOE is Ownable {
         string memory symbol,
         string memory baseURI,
         bytes32 salt
-    ) external  requireSignature(signature)returns (address collection) {
-        if (block.timestamp <= lastCallTimestamp[msg.sender] + COOLDOWN_PERIOD)
-       revert CoolDown();
+    ) external requireSignature(signature) returns (address collection) {
+        if (block.timestamp <= lastCallTimestamp[msg.sender] + COOLDOWN_PERIOD) {
+            revert CoolDown();
+        }
         address vault = alignmentVaults[alignedNft];
         if (vault == address(0)) revert NoVault();
         collection = LibClone.cloneDeterministic(oe1155Implementation, salt);
         IOE1155Init(collection).initialize(newOwner, vault, allocation, name, symbol, baseURI);
     }
 
-
- function setSigner(address value) external onlyOwner {
+    function setSigner(address value) external onlyOwner {
         signer = value;
     }
 
-
-     modifier requireSignature(bytes calldata signature) {
+    modifier requireSignature(bytes calldata signature) {
         require(
-            keccak256(abi.encode(msg.sender)).toEthSignedMessageHash().recover(
-                signature
-            ) == signer,
+            keccak256(abi.encode(msg.sender)).toEthSignedMessageHash().recover(signature) == signer,
             "Invalid signature."
         );
         _;

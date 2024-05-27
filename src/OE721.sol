@@ -41,7 +41,7 @@ contract Normilio is ERC721AUpgradeable, Ownable, Initializable, IOERC721 {
         vault = vault_;
         allocation = allocation_;
         _TotalSupply = TotalSupply;
-          _price = price;
+        _price = price;
         __ERC721A_init(name_, symbol_);
         _baseURIStorage = SSTORE2.write(abi.encode(baseURI_));
         emit Allocation(allocation_);
@@ -57,9 +57,6 @@ contract Normilio is ERC721AUpgradeable, Ownable, Initializable, IOERC721 {
         _baseURIStorage = SSTORE2.write(abi.encode(newBaseURI));
         emit BaseURIUpdate(newBaseURI);
     }
-
-
-
 
     function mint(uint256 quantity) external payable {
         if (msg.value != _price * quantity) revert NoMoney();

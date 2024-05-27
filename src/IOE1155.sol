@@ -30,7 +30,10 @@ interface IOE1155 {
     function baseURI() external view returns (string memory);
     function getTokenIds() external view returns (uint256[] memory);
 
-    function tokenData(uint256 tokenId) external view returns (address uri, uint48 supply, uint48 minted, uint256 price);
+    function tokenData(uint256 tokenId)
+        external
+        view
+        returns (address uri, uint48 supply, uint48 minted, uint256 price);
     function totalSupply(uint256 tokenId) external view returns (uint48);
     function maxSupply(uint256 tokenId) external view returns (uint48);
     function getPrice(uint256 tokenId) external view returns (uint256);
