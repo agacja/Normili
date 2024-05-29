@@ -18,6 +18,10 @@ interface IL2CrossDomainMessenger {
     function sendMessage(address _target, bytes calldata _message, uint32 _minGasLimit) external payable;
 }
 
+interface IL2ToL1MessagePasser {
+    function initiateWithdrawal(address _target, uint256 _gasLimit, bytes memory _data) external payable;
+}
+
 interface IOptimismPortal {
     function proveWithdrawalTransaction(
         Types.WithdrawalTransaction memory _tx,
@@ -65,6 +69,8 @@ contract NormiliOE is Ownable {
     event WithdrawalProven(bytes32 indexed withdrawalHash);
     event WithdrawalFinalized(bytes32 indexed withdrawalHash);
 
+
+
     struct AlignmentData {
         address vault;
         uint96 eth;
@@ -75,9 +81,9 @@ contract NormiliOE is Ownable {
         bool proven;
     }
 
-    IL2CrossDomainMessenger public immutable L2_MESSENGER = IL2CrossDomainMessenger(0x4200000000000000000000000000000000000007);
+  //  IL2CrossDomainMessenger public immutable L2_MESSENGER = IL2CrossDomainMessenger(0x4200000000000000000000000000000000000007);
     IOptimismPortal private constant OPTIMISM_PORTAL = IOptimismPortal(0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1);
-
+    IL2ToL1MessagePasser public immutable L2_TO_L1_MESSAGE_PASSER = IL2ToL1MessagePasser(0x4200000000000000000000000000000000000016);
     address public oe721Implementation;
     address public oe1155Implementation;
     address public signer;
@@ -171,19 +177,11 @@ contract NormiliOE is Ownable {
         signer = value;
     }
 
- function bridgeToVault(address nft) external onlyOwner {
-    AlignmentData memory data = alignmentVaults[nft];
-    if (data.vault == address(0) || data.eth == 0) return;
-    unchecked {
-        alignmentVaults[nft].eth = 0;
-        totalAlignedEth -= data.eth;
-    }
-    L2_MESSENGER.sendMessage{value: data.eth}(data.vault, bytes("milady"), 200_000);
-    emit Bridged(nft, data.vault, data.eth);
-}
 
-    function initiateWithdrawal(address to, uint256 amount) external {
-        AlignmentData memory vaultData = alignmentVaults[msg.sender];
+
+
+function initiateWithdrawal(address nft, uint256 amount) external {
+        AlignmentData memory vaultData = alignmentVaults[nft];
         if (vaultData.vault == address(0)) {
             revert NoVault();
         }
@@ -192,94 +190,24 @@ contract NormiliOE is Ownable {
         }
 
         unchecked {
-            alignmentVaults[msg.sender].eth -= uint96(amount);
+            alignmentVaults[nft].eth -= uint96(amount);
             totalAlignedEth -= amount;
         }
 
         bytes memory message = abi.encodeWithSignature(
             "processWithdrawal(address,address,uint256)",
             msg.sender,
-            to,
+            vaultData.vault,
             amount
         );
-        bytes32 withdrawalHash = keccak256(message);
 
-        L2_MESSENGER.sendMessage{value: amount}(
+        L2_TO_L1_MESSAGE_PASSER.initiateWithdrawal{value: amount}(
             address(this),
-            message,
-            200_000
+            200_000,
+            message
         );
 
-        emit WithdrawalInitiated(msg.sender, to, amount, withdrawalHash);
-    }
-
-    function proveWithdrawalTransaction(
-        Types.WithdrawalTransaction memory _tx,
-        uint256 _l2OutputIndex,
-        Types.OutputRootProof calldata _outputRootProof,
-        bytes[] calldata _withdrawalProof
-    ) external {
-        bytes32 withdrawalHash = keccak256(
-            abi.encodeWithSignature(
-                "processWithdrawal(address,address,uint256)",
-                _tx.sender,
-                _tx.target,
-                _tx.value
-            )
-        );
-
-        if (processedWithdrawals[withdrawalHash]) {
-            revert WithdrawalAlreadyProcessed();
-        }
-        if (withdrawalProofs[withdrawalHash].proven) {
-            revert WithdrawalNotProven();
-        }
-
-        OPTIMISM_PORTAL.proveWithdrawalTransaction(
-            _tx,
-            _l2OutputIndex,
-            _outputRootProof,
-            _withdrawalProof
-        );
-
-        withdrawalProofs[withdrawalHash] = WithdrawalProof({
-            timestamp: block.timestamp,
-            proven: true
-        });
-
-        emit WithdrawalProven(withdrawalHash);
-    }
-
-    function finalizeWithdrawalTransaction(
-        Types.WithdrawalTransaction memory _tx
-    ) external {
-        bytes32 withdrawalHash = keccak256(
-            abi.encodeWithSignature(
-                "processWithdrawal(address,address,uint256)",
-                _tx.sender,
-                _tx.target,
-                _tx.value
-            )
-        );
-
-        WithdrawalProof memory proof = withdrawalProofs[withdrawalHash];
-
-        if (!proof.proven) {
-            revert WithdrawalNotProven();
-        }
-
-        if (processedWithdrawals[withdrawalHash]) {
-            revert WithdrawalAlreadyProcessed();
-        }
-
-        if (block.timestamp <= proof.timestamp + OPTIMISM_PORTAL.FINALIZATION_PERIOD_SECONDS()) {
-            revert FaultChallengePeriodNotPassed();
-        }
-
-        OPTIMISM_PORTAL.finalizeWithdrawalTransaction(_tx);
-
-        processedWithdrawals[withdrawalHash] = true;
-
-        emit WithdrawalFinalized(withdrawalHash);
+        bytes32 withdrawalHash = keccak256(message);
+        emit WithdrawalInitiated(msg.sender, vaultData.vault, amount, withdrawalHash);
     }
 }
