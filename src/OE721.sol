@@ -6,6 +6,7 @@ error SaleClosed();
 error NoMoney();
 error OutOfStock();
 error WalletLimitExceeded();
+error FailedToSendFunds();
 
 import {ERC721AUpgradeable} from "ERC721A-Upgradeable/ERC721AUpgradeable.sol";
 import {Ownable} from "../lib/solady/src/auth/Ownable.sol";
@@ -20,14 +21,16 @@ interface INormiliOE {
 }
 
 contract Normilio is ERC721AUpgradeable, Ownable, Initializable, IOERC721 {
+    mapping(address => uint256) public alignedFunds;
+
     address private _baseURIStorage;
     address public alignedNft;
     address public deployer;
     bool public locked;
     uint16 public allocation;
-    uint256 _price;
+    uint256 price;
     uint256 _MaxPaidPerWallet;
-    uint256 _TotalSupply;
+    uint256 TotalSupply;
 
     constructor() payable {
         _disableInitializers();
@@ -36,8 +39,8 @@ contract Normilio is ERC721AUpgradeable, Ownable, Initializable, IOERC721 {
     function initialize(
         address owner_,
         address alignedNft_,
-        uint256 TotalSupply,
-        uint256 price,
+        uint256 price_,
+        uint256 TotalSupply_,
         uint16 allocation_,
         string memory name_,
         string memory symbol_,
@@ -45,9 +48,10 @@ contract Normilio is ERC721AUpgradeable, Ownable, Initializable, IOERC721 {
     ) external initializer {
         _initializeOwner(owner_);
         alignedNft = alignedNft_;
+        price = price_;
         allocation = allocation_;
-        _TotalSupply = TotalSupply;
-        _price = price;
+        TotalSupply = TotalSupply_;
+
         __ERC721A_init(name_, symbol_);
         _baseURIStorage = SSTORE2.write(abi.encode(baseURI_));
         deployer = msg.sender;
@@ -66,15 +70,18 @@ contract Normilio is ERC721AUpgradeable, Ownable, Initializable, IOERC721 {
     }
 
     function mint(uint256 quantity) external payable {
-        if (msg.value != _price * quantity) revert NoMoney();
-        if (_totalMinted() + quantity > _TotalSupply) revert OutOfStock();
+        if (msg.value != price * quantity) revert NoMoney();
+        if (_totalMinted() + quantity > TotalSupply) revert OutOfStock();
         // if (saleState == 0) revert SaleClosed();
         if ((_numberMinted(msg.sender) - _getAux(msg.sender)) + quantity > _MaxPaidPerWallet) {
             revert WalletLimitExceeded();
         }
-        _mint(msg.sender, quantity);
+
+        uint256 alignedShare = FPML.fullMulDiv(msg.value, allocation, 10_000);
         // Send aligned funds to factory for accrual
-        INormiliOE(deployer).alignFunds{value: FPML.fullMulDiv(msg.value, allocation, 10_000)}(alignedNft);
+        INormiliOE(deployer).alignFunds{value: alignedShare}(alignedNft);
+
+        _mint(msg.sender, quantity);
         // TODO: Pay all other involved parties
     }
 }

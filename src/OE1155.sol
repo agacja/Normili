@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.15;
 
+error FailedToSendFunds();
+
 import {ERC1155} from "../lib/solady/src/tokens/ERC1155.sol";
 import {Ownable} from "../lib/solady/src/auth/Ownable.sol";
 import {Initializable} from "../lib/solady/src/utils/Initializable.sol";
@@ -18,8 +20,12 @@ interface INormiliOE {
 contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
     using EnumerableSetLib for EnumerableSetLib.Uint256Set;
 
+    mapping(address => uint256) public alignedFunds;
+
     address private _baseURI;
     address public deployer;
+    address public alignedNft;
+    uint16 allocation;
     bool public locked;
     string public name;
     string public symbol;
@@ -56,11 +62,17 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         _disableInitializers();
     }
 
-    function initialize(address owner_, string memory name_, string memory symbol_, string memory baseURI_)
-        external
-        initializer
-    {
+    function initialize(
+        address owner_,
+        address alignedNft_,
+        uint16 allocation_,
+        string memory name_,
+        string memory symbol_,
+        string memory baseURI_
+    ) external initializer {
         _initializeOwner(owner_);
+        alignedNft = alignedNft_;
+        allocation = allocation_;
         name = name_;
         symbol = symbol_;
         _baseURI = SSTORE2.write(abi.encode(baseURI_));
@@ -72,11 +84,11 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         return abi.decode(SSTORE2.read(_baseURI), (string));
     }
 
-    function allocation(uint256 tokenId) external view returns (uint16) {
+    function allocationOf(uint256 tokenId) public view returns (uint16) {
         return tokenData[tokenId].allocation;
     }
 
-    function alignedNft(uint256 tokenId) external view returns (address) {
+    function alignedNftOf(uint256 tokenId) public view returns (address) {
         return tokenData[tokenId].alignedNft;
     }
 

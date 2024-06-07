@@ -44,8 +44,8 @@ interface IOE1155 {
             uint96 price,
             uint40 mintEnd
         );
-    function allocation(uint256 tokenId) external view returns (uint16);
-    function alignedNft(uint256 tokenId) external view returns (address);
+
+   
     function totalSupply(uint256 tokenId) external view returns (uint40);
     function maxSupply(uint256 tokenId) external view returns (uint40);
     function getPrice(uint256 tokenId) external view returns (uint96);

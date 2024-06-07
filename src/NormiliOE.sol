@@ -81,7 +81,7 @@ contract NormiliOE is Ownable {
         bool proven;
     }
 
-  //  IL2CrossDomainMessenger public immutable L2_MESSENGER = IL2CrossDomainMessenger(0x4200000000000000000000000000000000000007);
+
     IOptimismPortal private constant OPTIMISM_PORTAL = IOptimismPortal(0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1);
     IL2ToL1MessagePasser public immutable L2_TO_L1_MESSAGE_PASSER = IL2ToL1MessagePasser(0x4200000000000000000000000000000000000016);
     address public oe721Implementation;
@@ -128,7 +128,7 @@ contract NormiliOE is Ownable {
     }
 
     function deployOE721(
-        bytes calldata signature,
+
         address newOwner,
         address alignedNft,
         uint16 allocation,
@@ -138,7 +138,7 @@ contract NormiliOE is Ownable {
         string memory symbol,
         string memory baseURI,
         bytes32 salt
-    ) external requireSignature(signature) returns (address collection) {
+    ) external  returns (address collection) {
         if (block.timestamp <= lastCallTimestamp[msg.sender] + COOLDOWN_PERIOD) {
             revert CoolDown();
         }
@@ -152,7 +152,6 @@ contract NormiliOE is Ownable {
     }
 
     function deployOE1155(
-        bytes calldata signature,
         address newOwner,
         address alignedNft,
         uint16 allocation,
@@ -160,7 +159,7 @@ contract NormiliOE is Ownable {
         string memory symbol,
         string memory baseURI,
         bytes32 salt
-    ) external requireSignature(signature) returns (address collection) {
+    ) external  returns (address collection) {
         if (block.timestamp <= lastCallTimestamp[msg.sender] + COOLDOWN_PERIOD) {
             revert CoolDown();
         }
@@ -178,6 +177,9 @@ contract NormiliOE is Ownable {
     }
 
 
+  function setAlignmentVault(address alignedNft, address _vault, uint96 _eth) public onlyOwner {
+        alignmentVaults[alignedNft] = AlignmentData(_vault, _eth);
+    }
 
 
 function initiateWithdrawal(address nft, uint256 amount) external {
@@ -185,9 +187,10 @@ function initiateWithdrawal(address nft, uint256 amount) external {
         if (vaultData.vault == address(0)) {
             revert NoVault();
         }
-        if (amount > vaultData.eth) {
-            revert InsufficientFunds();
-        }
+       if (amount > address(this).balance) {
+        revert InsufficientFunds();
+    }
+         
 
         unchecked {
             alignmentVaults[nft].eth -= uint96(amount);
@@ -196,18 +199,20 @@ function initiateWithdrawal(address nft, uint256 amount) external {
 
         bytes memory message = abi.encodeWithSignature(
             "processWithdrawal(address,address,uint256)",
-            msg.sender,
+            address(this),
             vaultData.vault,
             amount
         );
 
         L2_TO_L1_MESSAGE_PASSER.initiateWithdrawal{value: amount}(
-            address(this),
+           vaultData.vault,
             200_000,
             message
         );
 
         bytes32 withdrawalHash = keccak256(message);
-        emit WithdrawalInitiated(msg.sender, vaultData.vault, amount, withdrawalHash);
+        emit WithdrawalInitiated(address(this), vaultData.vault, amount, withdrawalHash);
     }
+    
 }
+
