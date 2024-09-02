@@ -2,6 +2,19 @@
 pragma solidity ^0.8.15;
 
 error FailedToSendFunds();
+error failed();
+error InsufficientFee();
+error RefundFailed();
+error FeeTooHigh();
+error InsufficientPayment();
+error FeeCalculationError();
+error Overflow();
+error SupplyCap();
+error DoesntExist();
+error Exists();
+error Locked();
+error Closed();
+error AllocationTooLow(); 
 
 import {ERC1155} from "../lib/solady/src/tokens/ERC1155.sol";
 import {Ownable} from "../lib/solady/src/auth/Ownable.sol";
@@ -15,6 +28,11 @@ import {FixedPointMathLib as FPML} from "../lib/solady/src/utils/FixedPointMathL
 
 interface INormiliOE {
     function alignFunds(address alignedNft) external payable;
+    function getPlatformFee() external view returns (uint16);
+}
+
+interface INVault {
+    function reciveFee(uint256 platformFeeAmount) external payable;
 }
 
 contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
@@ -31,12 +49,24 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
     string public symbol;
     mapping(uint256 tokenId => TokenData) public tokenData;
     EnumerableSetLib.Uint256Set private _tokenIds;
+    uint256 public lowMintFee = 69;
 
     modifier mintable(uint256 tokenId, uint256 amount) {
         TokenData memory token = tokenData[tokenId];
         if (amount > token.supply) revert Overflow();
         if (token.minted + amount > token.supply) revert SupplyCap();
-        if (msg.value < amount * token.price) revert InsufficientPayment();
+        if (msg.value < FPML.fullMulDiv(amount, token.price, 1)) revert InsufficientPayment();
+        unchecked {
+            tokenData[tokenId].minted += uint40(amount);
+        }
+        _;
+    }
+
+    modifier lowFeeMintable(uint256 tokenId, uint256 amount) {
+        TokenData memory token = tokenData[tokenId];
+        if (amount > token.supply) revert Overflow();
+        if (token.minted + amount > token.supply) revert SupplyCap();
+        if (msg.value != lowMintFee) revert InsufficientFee();
         unchecked {
             tokenData[tokenId].minted += uint40(amount);
         }
@@ -51,7 +81,7 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
             if (token.minted + amounts[i] > token.supply) revert SupplyCap();
             unchecked {
                 tokenData[tokenIds[i]].minted += uint40(amounts[i]);
-                required += amounts[i] * token.price;
+                required = FPML.fullMulDiv(required, 1, 1) + FPML.fullMulDiv(amounts[i], token.price, 1);
             }
         }
         if (msg.value < required) revert InsufficientPayment();
@@ -70,6 +100,7 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         string memory symbol_,
         string memory baseURI_
     ) external initializer {
+        if (allocation_ < 500) revert AllocationTooLow();
         _initializeOwner(owner_);
         alignedNft = alignedNft_;
         allocation = allocation_;
@@ -130,6 +161,7 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         uint96 price,
         uint40 mintEnd
     ) external onlyOwner {
+         if (allocation_ < 500) revert AllocationTooLow(); 
         if (_tokenIds.contains(tokenId)) revert Exists();
         address metadata;
         if (bytes(tokenURI).length > 0) {
@@ -169,13 +201,43 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         emit TokenURIUpdate(tokenId, tokenURI);
     }
 
-    function mint(address to, uint256 tokenId, uint256 amount) external payable mintable(tokenId, amount) {
-        // Send aligned funds to factory for accrual
+    function lowFeeMint(address to, uint256 tokenId, uint256 amount) external payable lowFeeMintable(tokenId, amount) {
         TokenData memory data = tokenData[tokenId];
         if (data.mintEnd != 0 && block.timestamp > data.mintEnd) revert Closed();
-        INormiliOE(deployer).alignFunds{value: FPML.fullMulDiv(msg.value, data.allocation, 10_000)}(data.alignedNft);
-        // TODO: Pay all other involved parties
+
+        uint256 thirdOfFee = FPML.fullMulDiv(lowMintFee, 1, 3);
+
+        INVault(0x269A0edB6885A6481157977020596200425FdAaf).reciveFee{value: thirdOfFee}(thirdOfFee);
+        INormiliOE(deployer).alignFunds{value: thirdOfFee}(data.alignedNft);
+
         _mint(to, tokenId, amount, bytes(""));
+    }
+
+    function mint(address to, uint256 tokenId, uint256 amount) external payable mintable(tokenId, amount) {
+        TokenData memory data = tokenData[tokenId];
+        if (data.mintEnd != 0 && block.timestamp > data.mintEnd) revert Closed();
+
+        uint256 totalCost = FPML.fullMulDiv(amount, data.price, 1);
+        if (msg.value < totalCost) revert InsufficientPayment();
+
+        uint16 platformFeePercentage = INormiliOE(deployer).getPlatformFee();
+        uint256 platformFeeAmount = FPML.fullMulDiv(totalCost, platformFeePercentage, 10000);
+        uint256 alignedAmount = FPML.fullMulDiv(totalCost, data.allocation, 10_000);
+
+        if (platformFeeAmount + alignedAmount > totalCost) 
+            revert FeeCalculationError();
+
+        INormiliOE(deployer).alignFunds{value: alignedAmount}(data.alignedNft);
+        INVault(0x269A0edB6885A6481157977020596200425FdAaf).reciveFee{value: platformFeeAmount}(platformFeeAmount);
+
+        _mint(to, tokenId, amount, bytes(""));
+
+        // Refund excess payment
+        uint256 excess = msg.value - totalCost;
+        if (excess > 0) {
+            (bool success, ) = msg.sender.call{value: excess}("");
+            if (!success) revert RefundFailed();
+        }
     }
 
     function batchMint(address to, uint256[] memory tokenIds, uint256[] memory amounts)
@@ -183,14 +245,39 @@ contract OE1155 is ERC1155, Ownable, Initializable, IOE1155 {
         payable
         batchMintable(tokenIds, amounts)
     {
-        // Send aligned funds to factory for accrual
+        uint256 totalCost = 0;
+        uint256 totalAlignedAmount = 0;
+
         for (uint256 i; i < tokenIds.length; ++i) {
             TokenData memory data = tokenData[tokenIds[i]];
-            uint256 payment = FPML.rawMul(data.price, amounts[i]);
-            INormiliOE(deployer).alignFunds{value: FPML.fullMulDiv(payment, data.allocation, 10_000)}(data.alignedNft);
+            uint256 tokenCost = FPML.fullMulDiv(amounts[i], data.price, 1);
+            totalCost = FPML.fullMulDiv(totalCost, 1, 1) + tokenCost;
+            totalAlignedAmount += FPML.fullMulDiv(tokenCost, data.allocation, 10_000);
         }
-        // TODO: Pay all other involved parties
+
+        if (msg.value < totalCost) revert InsufficientPayment();
+
+        uint16 platformFeePercentage = INormiliOE(deployer).getPlatformFee();
+        uint256 platformFeeAmount = FPML.fullMulDiv(totalCost, platformFeePercentage, 10000);
+
+        if (platformFeeAmount + totalAlignedAmount > totalCost) 
+            revert FeeCalculationError();
+        
+        INormiliOE(deployer).alignFunds{value: totalAlignedAmount}(tokenData[tokenIds[0]].alignedNft);
+        INVault(0x269A0edB6885A6481157977020596200425FdAaf).reciveFee{value: platformFeeAmount}(platformFeeAmount);
+
         _batchMint(to, tokenIds, amounts, bytes(""));
+
+        // Refund excess payment
+        uint256 excess = msg.value - totalCost;
+        if (excess > 0) {
+            (bool success, ) = msg.sender.call{value: excess}("");
+            if (!success) revert RefundFailed();
+        }
+    }
+
+    function setLowMintFee(uint256 newFee) external onlyOwner {
+        lowMintFee = newFee;
     }
 
     function burn(uint256 tokenId, uint256 amount) external {

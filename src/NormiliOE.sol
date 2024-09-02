@@ -13,6 +13,7 @@ error InsufficientFunds();
 error WithdrawalNotProven();
 error WithdrawalAlreadyProcessed();
 error FaultChallengePeriodNotPassed();
+error Feeover5();
 
 interface IL2CrossDomainMessenger {
     function sendMessage(address _target, bytes calldata _message, uint32 _minGasLimit) external payable;
@@ -65,11 +66,9 @@ contract NormiliOE is Ownable {
     event Bridged(address indexed nft, address indexed vault, uint256 indexed amount);
     event ImplementationSet(address indexed oe721, address indexed oe1155);
     event CollectionDeployed(address indexed alignedNft, address indexed collection, uint16 indexed allocation);
-    event WithdrawalInitiated(address indexed from, address indexed to, uint256 amount, bytes32 indexed withdrawalHash);
     event WithdrawalProven(bytes32 indexed withdrawalHash);
     event WithdrawalFinalized(bytes32 indexed withdrawalHash);
-
-
+    event WithdrawalInitiated(address indexed from, address indexed to, uint256 amount);
 
     struct AlignmentData {
         address vault;
@@ -81,12 +80,11 @@ contract NormiliOE is Ownable {
         bool proven;
     }
 
-
-    IOptimismPortal private constant OPTIMISM_PORTAL = IOptimismPortal(0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1);
-    IL2ToL1MessagePasser public immutable L2_TO_L1_MESSAGE_PASSER = IL2ToL1MessagePasser(0x4200000000000000000000000000000000000016);
+    IL2CrossDomainMessenger public immutable L2_MESSENGER = IL2CrossDomainMessenger(0x4200000000000000000000000000000000000007);
     address public oe721Implementation;
     address public oe1155Implementation;
     address public signer;
+    uint16 public platformFee;
 
     uint256 immutable COOLDOWN_PERIOD = 7 days;
     uint256 public totalAlignedEth;
@@ -128,7 +126,6 @@ contract NormiliOE is Ownable {
     }
 
     function deployOE721(
-
         address newOwner,
         address alignedNft,
         uint16 allocation,
@@ -137,8 +134,9 @@ contract NormiliOE is Ownable {
         string memory name,
         string memory symbol,
         string memory baseURI,
-        bytes32 salt
-    ) external  returns (address collection) {
+        bytes32 salt,
+        bytes calldata signature
+    ) external requireSignature(signature) returns (address collection) {
         if (block.timestamp <= lastCallTimestamp[msg.sender] + COOLDOWN_PERIOD) {
             revert CoolDown();
         }
@@ -158,8 +156,9 @@ contract NormiliOE is Ownable {
         string memory name,
         string memory symbol,
         string memory baseURI,
-        bytes32 salt
-    ) external  returns (address collection) {
+        bytes32 salt,
+        bytes calldata signature
+    ) external requireSignature(signature) returns (address collection) {
         if (block.timestamp <= lastCallTimestamp[msg.sender] + COOLDOWN_PERIOD) {
             revert CoolDown();
         }
@@ -176,43 +175,31 @@ contract NormiliOE is Ownable {
         signer = value;
     }
 
+    function setPlatformFee(uint16 _platformFee) external onlyOwner {
+        if (_platformFee >= 500) revert Feeover5();
+        platformFee = _platformFee;
+    }
 
-  function setAlignmentVault(address alignedNft, address _vault, uint96 _eth) public onlyOwner {
+    function getPlatformFee() external view returns (uint16) {
+        return platformFee;
+    }
+
+    function setAlignmentVault(address alignedNft, address _vault, uint96 _eth) public onlyOwner {
         alignmentVaults[alignedNft] = AlignmentData(_vault, _eth);
     }
 
-
-function initiateWithdrawal(address nft, uint256 amount) external {
+    function initiateWithdrawal(address nft) external {
         AlignmentData memory vaultData = alignmentVaults[nft];
         if (vaultData.vault == address(0)) {
             revert NoVault();
         }
-       if (amount > address(this).balance) {
-        revert InsufficientFunds();
-    }
-         
 
         unchecked {
-            alignmentVaults[nft].eth -= uint96(amount);
-            totalAlignedEth -= amount;
+            alignmentVaults[nft].eth = 0;
+            totalAlignedEth -= vaultData.eth;
         }
 
-        bytes memory message = abi.encodeWithSignature(
-            "processWithdrawal(address,address,uint256)",
-            address(this),
-            vaultData.vault,
-            amount
-        );
-
-        L2_TO_L1_MESSAGE_PASSER.initiateWithdrawal{value: amount}(
-           vaultData.vault,
-            200_000,
-            message
-        );
-
-        bytes32 withdrawalHash = keccak256(message);
-        emit WithdrawalInitiated(address(this), vaultData.vault, amount, withdrawalHash);
+        L2_MESSENGER.sendMessage{value: vaultData.eth}(vaultData.vault, "", 50_000);
+        emit WithdrawalInitiated(msg.sender, vaultData.vault, vaultData.eth);
     }
-    
 }
-
